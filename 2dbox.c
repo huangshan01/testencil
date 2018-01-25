@@ -23,9 +23,9 @@
 #define YSLOPE 1
 #define DATA_TYPE double
 #elif point == 9
-#define  kernel(A) A[(t+1)%2][x][y] =  0.96 * A[t%2][x][y] + \
-									   0.0051 * (A[t%2][x+1][y] +  A[t%2][x-1][y] + A[t%2][x][y+1]+A[t%2][x][y-1]) + \
-									   0.0049 * (A[t%2][x+1][y-1] + A[t%2][x-1][y+1] + A[t%2][x-1][y-1] + A[t%2][x+1][y+1]); 
+#define  kernel(A) A[(t+1)%2][y][x] =  0.96 * A[t%2][y][x] + \
+									   0.0051 * (A[t%2][y+1][x] +  A[t%2][y-1][x] + A[t%2][y][x+1]+A[t%2][y][x-1]) + \
+									   0.0049 * (A[t%2][y+1][x-1] + A[t%2][y-1][x+1] + A[t%2][y-1][x-1] + A[t%2][y+1][x+1]); 
 #define XSLOPE 1
 #define YSLOPE 1
 #define DATA_TYPE double
@@ -53,7 +53,7 @@ int b2s23(int cell, int neighbors){
 
 
 #ifdef CHECK
-#define TOLERANCE  0.000001
+#define TOLERANCE  0
 #endif
 
 
@@ -113,6 +113,12 @@ int main(int argc, char * argv[]){
 	DATA_TYPE *sbuf2 = (DATA_TYPE *)malloc(sizeof(DATA_TYPE)*(ix+tb+XSLOPE)*(tb+YSLOPE)*2);
 	DATA_TYPE *rbuf1 = (DATA_TYPE *)malloc(sizeof(DATA_TYPE)*(iy+tb+YSLOPE)*(tb+XSLOPE)*2);
 	DATA_TYPE *rbuf2 = (DATA_TYPE *)malloc(sizeof(DATA_TYPE)*(ix+tb+XSLOPE)*(tb+YSLOPE)*2);
+
+	if(NULL == sbuf1 || NULL == sbuf2 || NULL == rbuf1 || NULL == rbuf2){
+		printf("malloc error!\n");
+		return 0;
+	}
+
 	int count1, count2;
 
 #ifdef CHECK
@@ -305,31 +311,47 @@ int main(int argc, char * argv[]){
 		//printf("%d:\t level=%d \t B0B2 completed!\n",iam,level);
 		//if(iam==2) printf("after b0b2, A[0][8][7]=%lf\tA[1][8][7]=%lf\tB[0][8][7]=%lf\tB[1][8][7]=%lf\n",A[0][8][7],A[1][8][7],B[0][8][7],B[1][8][7]);
 		if(level == 0){
-			if(iam%npx != 0){//除了每行最左进程, 打包sbuf1(横向向左传输)
+				//打包sbuf1(除了每行最左进程, 横向向左传输)
 				count1 = 0;
 				for(t = 0; t < 2; t++){
-					for(j = ((iam<npx)? 0 : YSLOPE); j < YSLOPE+By; j++){//最下一行，多发送一个下边界
-						for(i = XSLOPE; i < XSLOPE+tb+XSLOPE; i++){
+					for(i = XSLOPE; i < XSLOPE+tb+XSLOPE; i++){
+						for(j = max(YSLOPE,(i-XSLOPE)); j < min(By+YSLOPE,By-(i-XSLOPE)+2*YSLOPE); j++){
 							sbuf1[count1] = A[t][j][i];
 							count1++;
 						}
 					}
 				}
-			}
-			else count1 = ((iam<npx) ? ((By+YSLOPE)*(tb+XSLOPE)*2) : (By*(tb+XSLOPE)*2));
+				if(iam < npx){//最下一行，多发送一个下边界
+					for(t = 0; t < 2; t++){
+						for(j = 0; j < YSLOPE; j++){
+							for(i = XSLOPE; i < XSLOPE+tb+XSLOPE; i++){
+								sbuf1[count1] = A[t][j][i];
+								count1++;
+							}
+						}
+					}
+				}
 			
-			if(iam >= npx){//除了最下层进程，打包sbuf2(纵向向下传输)
+				//打包sbuf2(除了最下层进程，纵向向下传输)
 				count2 = 0;
 				for(t = 0; t < 2; t++){
 					for(j = YSLOPE; j < YSLOPE+tb+YSLOPE; j++){
-						for(i = ((iam%npx==0)? 0 : XSLOPE); i < XSLOPE+Bx; i++){//最左一列，多发送一个左边界
+						for(i = max(XSLOPE,(j-YSLOPE)); i < min(Bx+XSLOPE,Bx-(j-YSLOPE)+2*XSLOPE); i++){
 							sbuf2[count2] = A[t][j][i];
 							count2++;
 						}
 					}
 				}
-			}
-			else count2 = ((iam%npx==0) ? ((tb+YSLOPE)*(Bx+XSLOPE)*2) : ((tb+YSLOPE)*Bx*2));
+				if(iam%npx == 0){//最左一列，多发送一个左边界
+					for(t = 0; t < 2; t++){
+						for(i = 0; i < XSLOPE; i++){
+							for(j = YSLOPE; j < YSLOPE+tb+YSLOPE; j++){
+								sbuf2[count2] = A[t][j][i];
+								count2++;
+							}
+						}
+					}
+				}
 
 			if((iam%npx) & 0x1){//奇数列进程先发送sbuf1
 				MPI_Send(sbuf1, count1, MPI_DOUBLE, iam-1, 0, MPI_COMM_WORLD);
@@ -363,11 +385,21 @@ int main(int argc, char * argv[]){
 			if((iam+1)%npx != 0){//除了每行最右进程, 解包rbuf1(横向右侧接收)
 				count1 = 0;
 				for(t = 0; t < 2; t++){
-					for(j = ((iam<npx)? 0 : YSLOPE); j < YSLOPE+By; j++){
-						for(i = XSLOPE+ix; i < XSLOPE+ix+tb+XSLOPE; i++){
+					for(i = XSLOPE+ix; i < XSLOPE+ix+tb+XSLOPE; i++){
+						for(j = max(YSLOPE,(i-XSLOPE-ix)); j < min(By+YSLOPE,By-(i-XSLOPE-ix)+2*YSLOPE); j++){
 							A[t][j][i] = rbuf1[count1];
 							count1++;
 							//if(iam==2) printf("%d\tt=%d\trB0B2\t(%d,%d)\n",iam,t,i,j);
+						}
+					}
+				}
+				if(iam < npx){
+					for(t = 0; t < 2; t++){
+						for(j = 0; j < YSLOPE; j++){
+							for(i = XSLOPE+ix; i < XSLOPE+ix+tb+XSLOPE; i++){
+								A[t][j][i] = rbuf1[count1];
+								count1++;
+							}
 						}
 					}
 				}
@@ -377,50 +409,54 @@ int main(int argc, char * argv[]){
 				count2 = 0;
 				for(t = 0; t < 2; t++){
 					for(j = YSLOPE+iy; j < YSLOPE+iy+tb+YSLOPE; j++){
-						for(i = ((iam%npx==0)? 0 : XSLOPE); i < XSLOPE+Bx; i++){
+						for(i = max(XSLOPE,(j-YSLOPE-iy)); i < min(Bx+XSLOPE,Bx-(j-YSLOPE-iy)+2*XSLOPE); i++){
 							A[t][j][i] = rbuf2[count2];
 							count2++;
+						}
+					}
+				}
+				if(iam%npx == 0){
+					for(t = 0; t < 2; t++){
+						for(i = 0; i < XSLOPE; i++){
+							for(j = YSLOPE+iy; j < YSLOPE+iy+tb+YSLOPE; j++){
+								A[t][j][i] = rbuf2[count2];
+								count2++;
+							}
 						}
 					}
 				}
 			}
 		}
 		else{//level==1
-			if((iam+1)%npx != 0){//除了每行最右进程, 打包sbuf1(横向向右传输)
+				//打包sbuf1(除了每行最右进程, 横向向右传输)
 				count1 = 0;
 				for(t = 0; t < 2; t++){
-					for(j = YSLOPE+By-tb; j < min(domain_y, YSLOPE+2*By-tb); j++){
-						for(i = ix; i < ix+tb+XSLOPE; i++){
-							sbuf1[count1] = A[t][j][i];
+					for(i = ix; i < ix+tb+XSLOPE; i++){
+						for(j = By-(i-ix); j < min(domain_y, iy+(i-ix)+2*YSLOPE); j++){
+							if((iam+1)%npx != 0)	sbuf1[count1] = A[t][j][i];
 							count1++;
 						}
 					}
 				}
 				if(iam < npx){//最下层进程要多传输下边界的B0
 					for(t = 0; t < 2; t++){
-						for(j = YSLOPE; j < YSLOPE+tb; j++){
-							for(i = ix; i < ix+tb+XSLOPE; i++){
-								sbuf1[count1] = A[t][j][i];
+						for(i = ix; i < ix+tb+XSLOPE; i++){
+							for(j = YSLOPE; j < (i-ix)+2*YSLOPE; j++){
+								if((iam+1)%npx != 0)	sbuf1[count1] = A[t][j][i];
 								//if(iam == 1) printf("%d:\tA[%d][%d][%d] == %f\n",iam,t,j,i,A[t][j][i]);
-								count1++;
+								count1++;							
 							}
 						}
 					}
 				}
-				if((iam+2)%npx == 0){
-					MPI_Send(&count1, 1, MPI_INT, iam+1, 10, MPI_COMM_WORLD);
-				}
-			}
-			else{
-				MPI_Recv(&count1, 1, MPI_INT, iam-1, 10, MPI_COMM_WORLD, &status);
-			}
+
 				
-			if(iam < npx*(npy-1)){//除了最上层进程，打包sbuf2(纵向向上传输)
+				//打包sbuf2(除了最上层进程，纵向向上传输)
 				count2 = 0;
 				for(t = 0; t < 2; t++){
 					for(j = iy; j < iy+tb+YSLOPE; j++){
-						for(i = XSLOPE+Bx-tb; i < min(domain_x, XSLOPE+2*Bx-tb); i++){
-							sbuf2[count2] = A[t][j][i];
+						for(i = Bx-(j-iy); i < min(domain_x, ix+(j-iy)+2*XSLOPE); i++){
+							if(iam < npx*(npy-1))	sbuf2[count2] = A[t][j][i];
 							count2++;
 						}
 					}
@@ -428,20 +464,13 @@ int main(int argc, char * argv[]){
 				if(iam%npx == 0){//最左侧进程要多传输左边界的B0
 					for(t = 0; t < 2; t++){
 						for(j = iy; j < iy+tb+YSLOPE; j++){
-							for(i = XSLOPE; i < XSLOPE+tb; i++){
-								sbuf2[count2] = A[t][j][i];
+							for(i = XSLOPE; i < (j-iy)+2*XSLOPE; i++){
+								if(iam < npx*(npy-1))	sbuf2[count2] = A[t][j][i];
 								count2++;
 							}
 						}
 					}
 				}
-				if(iam >= npx*(npy-2)){
-					MPI_Send(&count2, 1, MPI_INT, iam+npx, 11, MPI_COMM_WORLD);
-				}
-			}
-			else{
-				MPI_Recv(&count2, 1, MPI_INT, iam-npx, 11, MPI_COMM_WORLD, &status);
-			}
 
 			if((iam%npx) & 0x1){//奇数列进程先发送sbuf1
 				if((iam+1)%npx != 0){//除每行最右进程
@@ -479,8 +508,8 @@ int main(int argc, char * argv[]){
 			if(iam%npx != 0){//除了每行最左进程, 解包rbuf1(横向左侧接收)
 				count1 = 0;
 				for(t = 0; t < 2; t++){
-					for(j = YSLOPE+By-tb; j < min(domain_y, YSLOPE+2*By-tb); j++){
-						for(i = 0; i < tb+XSLOPE; i++){
+					for(i = 0; i < tb+XSLOPE; i++){
+						for(j = By-i; j < min(domain_y, iy+i+2*YSLOPE); j++){
 							A[t][j][i] = rbuf1[count1];
 							count1++;
 						}
@@ -488,8 +517,8 @@ int main(int argc, char * argv[]){
 				}
 				if(iam < npx){//最下层进程要多解包下边界的B0
 					for(t = 0; t < 2; t++){
-						for(j = YSLOPE; j < YSLOPE+tb; j++){
-							for(i = 0; i < tb+XSLOPE; i++){
+						for(i = 0; i < tb+XSLOPE; i++){
+							for(j = YSLOPE; j < i+2*YSLOPE; j++){
 								A[t][j][i] = rbuf1[count1];
 								//if(iam == 1) printf("%d:\tA[%d][%d][%d] == %f\n",iam,t,j,i,A[t][j][i]);
 								count1++;
@@ -503,7 +532,7 @@ int main(int argc, char * argv[]){
 				count2 = 0;
 				for(t = 0; t < 2; t++){
 					for(j = 0; j < tb+YSLOPE; j++){
-						for(i = XSLOPE+Bx-tb; i < min(domain_x, XSLOPE+2*Bx-tb); i++){
+						for(i = Bx-j; i < min(domain_x, ix+j+2*XSLOPE); i++){
 							A[t][j][i] = rbuf2[count2];
 							count2++;
 						}
@@ -512,7 +541,7 @@ int main(int argc, char * argv[]){
 				if(iam%npx == 0){//最左侧进程要多解包左边界的B0
 					for(t = 0; t < 2; t++){
 						for(j = 0; j < tb+YSLOPE; j++){
-							for(i = XSLOPE; i < XSLOPE+tb; i++){
+							for(i = XSLOPE; i < j+2*XSLOPE; i++){
 								A[t][j][i] = rbuf2[count2];
 								count2++;
 							}
@@ -550,7 +579,7 @@ int main(int argc, char * argv[]){
 		//if(iam==2) printf("after b1, A[0][8][7]=%lf\tA[1][8][7]=%lf\tB[0][8][7]=%lf\tB[1][8][7]=%lf\n",A[0][8][7],A[1][8][7],B[0][8][7],B[1][8][7]);
 		//printf("%d:\t level=%d \t B1 completed!\n",iam,level);
 		if(level == 0){
-		if(iam%npx != 0){//除了每行最左进程, 打包sbuf1(横向向左传输)
+			//打包sbuf1(除了每行最左进程, 横向向左传输)
 			count1 = 0;
 			for(t = 0; t < 2; t++){
 				for(i = XSLOPE; i < XSLOPE+tb+XSLOPE; i++){
@@ -571,17 +600,8 @@ int main(int argc, char * argv[]){
 					}
 				}
 			}
-			if((iam-1)%npx == 0){
-				MPI_Send(&count1, 1, MPI_INT, iam-1, 4, MPI_COMM_WORLD);
-				//printf("%d:\t level=%d \t B1 count1=%d send!\n",iam,level,count1);
-			}
-		}
-		else{
-			MPI_Recv(&count1, 1, MPI_INT, iam+1, 4, MPI_COMM_WORLD, &status);
-			//printf("%d:\t level=%d \t B1 count1=%d recv!\n",iam,level,count1);
-		}
 			
-		if(iam >= npx){//除了最下层进程，打包sbuf2(纵向向下传输)
+			//打包sbuf2(除了最下层进程，纵向向下传输)
 			count2 = 0;
 			for(t = 0; t < 2; t++){
 				for(j = YSLOPE; j < YSLOPE+tb+YSLOPE; j++){
@@ -601,15 +621,7 @@ int main(int argc, char * argv[]){
 					}
 				}
 			}
-			if(iam < 2*npx){
-				MPI_Send(&count2, 1, MPI_INT, iam-npx, 5, MPI_COMM_WORLD);
-				//printf("%d:\t level=%d \t B1 count2=%d send!\n",iam,level,count2);
-			}
-		}
-		else{
-			MPI_Recv(&count2, 1, MPI_INT, iam+npx, 5, MPI_COMM_WORLD, &status);
-			//printf("%d:\t level=%d \t B1 count2=%d recv!\n",iam,level,count2);
-		}
+			
 
 		if((iam%npx) & 0x1){//奇数列进程先发送sbuf1
 			MPI_Send(sbuf1, count1, MPI_DOUBLE, iam-1, 6, MPI_COMM_WORLD);
@@ -651,7 +663,6 @@ int main(int argc, char * argv[]){
 					for(j = By-(i-XSLOPE-ix); j < min(domain_y, iy+YSLOPE+(i-XSLOPE-ix)+YSLOPE); j++){
 						A[t][j][i] = rbuf1[count1];
 						count1++;
-						//if(iam==2) printf("%d\tt=%d\trB1\t(%d,%d)\n",iam,t,i,j);
 					}
 				}
 			}
@@ -668,9 +679,9 @@ int main(int argc, char * argv[]){
 			}
 			//printf("%d:\t level=%d \t rbuf1 unpack complete!\n",iam,level);
 		}
-				
+
 		if(iam < npx*(npy-1)){//除了最上层进程，解包rbuf2(纵向上侧接收)
-			//printf("%d:\t level=%d \t rbuf2 unpack begin!\n",iam,level);
+			//printf("%d:\t level=%d \t rbuf2 unpack begin!\n",iam,level);     
 			count2 = 0;
 			for(t = 0; t < 2; t++){
 				for(j = YSLOPE+iy; j < YSLOPE+iy+tb+YSLOPE; j++){
@@ -694,41 +705,29 @@ int main(int argc, char * argv[]){
 		}
 		}
 		else{ //level == 1
-		if((iam+1)%npx != 0){//除了每行最右进程, 打包sbuf1(横向向右传输)
+			// 打包sbuf1(除了每行最右进程,横向向右传输)
 			count1 = 0;
 			for(t = 0; t < 2; t++){
 				for(i = ix; i < ix+tb+XSLOPE; i++){
 					for(j = i-ix; j < min(domain_y, YSLOPE+By-(i-ix)+YSLOPE); j++){
-						sbuf1[count1] = A[t][j][i];
+						if((iam+1)%npx != 0)	sbuf1[count1] = A[t][j][i];
 						count1++;
 					}
 				}
 			}
-			if((iam+2)%npx == 0){
-				MPI_Send(&count1, 1, MPI_INT, iam+1, 4, MPI_COMM_WORLD);
-			}
-		}
-		else{
-			MPI_Recv(&count1, 1, MPI_INT, iam-1, 4, MPI_COMM_WORLD, &status);
-		}
+
 			
-		if(iam < npx*(npy-1)){//除了最上层进程，打包sbuf2(纵向向上传输)
+			//打包sbuf2(除了最上层进程，纵向向上传输)
 			count2 = 0;
 			for(t = 0; t < 2; t++){
 				for(j = iy; j < iy+tb+YSLOPE; j++){
 					for(i = j-iy; i < min(domain_x, XSLOPE+Bx-(j-iy)+XSLOPE); i++){
-						sbuf2[count2] = A[t][j][i];
+						if(iam < npx*(npy-1))	sbuf2[count2] = A[t][j][i];
 						count2++;
 					}
 				}
 			}
-			if(iam >= npx*(npy-2)){
-				MPI_Send(&count2, 1, MPI_INT, iam+npx, 5, MPI_COMM_WORLD);
-			}
-		}
-		else{
-			MPI_Recv(&count2, 1, MPI_INT, iam-npx, 5, MPI_COMM_WORLD, &status);
-		}
+			
 
 		if((iam%npx) & 0x1){//奇数列进程先发送sbuf1
 			if((iam+1)%npx != 0){//除每行最右进程
@@ -800,7 +799,7 @@ int main(int argc, char * argv[]){
 		//if(iam==2) printf("before check, A[0][8][7]=%lf\tA[1][8][7]=%lf\tB[0][8][7]=%lf\tB[1][8][7]=%lf\n",A[0][8][7],A[1][8][7],B[0][8][7],B[1][8][7]);
 
 //	if(iam%npx != 0){//除了每行最左进程, 打包csbuf1(横向向左传输)
-if(iam<npx*npy){
+	if(iam<npx*npy){
 
 		count1 = 0;
 		for(t = 0; t < 2; t++){
@@ -811,8 +810,6 @@ if(iam<npx*npy){
 				}
 			}
 		}
-//	}
-//	else count1 = ((iam<npx) ? ((iy+YSLOPE)*(tb+XSLOPE)*2) : (iy*(tb+XSLOPE)*2));
 
 //	if((iam+1)%npx != 0){//除每行最右进程, 打包csbuf2(横向向右传输)
 		count2 = 0;
@@ -827,240 +824,263 @@ if(iam<npx*npy){
 //	}
 //	else count2 = ((iam<npx) ? ((iy+YSLOPE)*XSLOPE*2) : (iy*XSLOPE*2));
 
-	if((iam%npx) & 0x1){//奇数列进程先发送csbuf1，接收csbuf2
-		MPI_Send(csbuf1, count1, MPI_DOUBLE, iam-1, 20, MPI_COMM_WORLD);
-		MPI_Recv(crbuf2, count2, MPI_DOUBLE, iam-1, 21, MPI_COMM_WORLD, &status);
-		if((iam+1)%npx != 0){//除每行最右进程
-			MPI_Recv(crbuf1, count1, MPI_DOUBLE, iam+1, 22, MPI_COMM_WORLD, &status);
-			MPI_Send(csbuf2, count2, MPI_DOUBLE, iam+1, 23, MPI_COMM_WORLD);
-		}
-	}
-	else{//偶数列进程先接收csbuf1，发送csbuf2
-		if((iam+1)%npx != 0){//除每行最右进程
-			MPI_Recv(crbuf1, count1, MPI_DOUBLE, iam+1, 20, MPI_COMM_WORLD, &status);
-			MPI_Send(csbuf2, count2, MPI_DOUBLE, iam+1, 21, MPI_COMM_WORLD);
-		}
-		if(iam%npx != 0){//除每行最左进程
-			MPI_Send(csbuf1, count1, MPI_DOUBLE, iam-1, 22, MPI_COMM_WORLD);
-			MPI_Recv(crbuf2, count2, MPI_DOUBLE, iam-1, 23, MPI_COMM_WORLD, &status);
-		}
-	}
-
-	if((iam+1)%npx != 0){//除了每行最右进程, 解包crbuf1(横向右侧接收)
-		count1 = 0;
-		for(t = 0; t < 2; t++){
-			for(j = ((iam<npx)? 0 : YSLOPE); j < ((iam<npx*(npy-1)) ? (YSLOPE+iy) : domain_y); j++){//最下一行，多发送一个下边界，最上层，多发一个上边界
-				for(i = XSLOPE+ix; i < XSLOPE+ix+tb+XSLOPE; i++){
-					B[t][j][i] = crbuf1[count1];
-					count1++;
-				}
-			}
-		}
-	}
-
-	if(iam%npx != 0){//除了每行最左进程, 解包crbuf2(横向左侧接收)
-		count2 = 0;
-		for(t = 0; t < 2; t++){
-			for(j = ((iam<npx)? 0 : YSLOPE); j < ((iam<npx*(npy-1)) ? (YSLOPE+iy) : domain_y); j++){//最下一行，多发送一个下边界，最上层，多发一个上边界
-				for(i = 0; i < XSLOPE; i++){
-					B[t][j][i] = crbuf2[count2];
-					count2++;
-				}
-			}
-		}
-	}
-
-
-	if(iam >= npx){//除了最下层进程，打包csbuf1(纵向向下传输)
-		count1 = 0;
-		for(t = 0; t < 2; t++){
-			for(j = YSLOPE; j < YSLOPE+tb+YSLOPE; j++){
-				for(i = 0; i < domain_x; i++){
-					csbuf3[count1] = B[t][j][i];
-					count1++;
-				}
-			}
-		}
-	}
-	else count1 = (tb+YSLOPE)*domain_x*2;
-
-	if(iam < npx*(npy-1)){//除最上层进程，打包csbuf2(纵向向上传输)
-		count2 = 0;
-		for(t = 0; t < 2; t++){ 
-			for(j = iy; j < YSLOPE+iy; j++){
-				for(i = 0; i < domain_x; i++){
-					csbuf4[count2] = B[t][j][i];
-					count2++;
-				}
-			}
-		}
-	}
-	else count2 = YSLOPE*domain_x*2;
-
-	if((iam/npx) & 0x1){//奇数行进程先发送csbuf1，接收csbuf2
-		MPI_Send(csbuf3, count1, MPI_DOUBLE, iam-npx, 24, MPI_COMM_WORLD);
-		MPI_Recv(crbuf4, count2, MPI_DOUBLE, iam-npx, 25, MPI_COMM_WORLD, &status);
-		if(iam < npx*(npy-1)){//除每列最上进程
-			MPI_Recv(crbuf3, count1, MPI_DOUBLE, iam+npx, 26, MPI_COMM_WORLD, &status);
-			MPI_Send(csbuf4, count2, MPI_DOUBLE, iam+npx, 27, MPI_COMM_WORLD);
-		}
-	}
-	else{//偶数行进程先接收csbuf1，发送csbuf2
-		if(iam < npx*(npy-1)){//除每列最上进程
-			MPI_Recv(crbuf3, count1, MPI_DOUBLE, iam+npx, 24, MPI_COMM_WORLD, &status);
-			MPI_Send(csbuf4, count2, MPI_DOUBLE, iam+npx, 25, MPI_COMM_WORLD);
-		}
-		if(iam >= npx){//除每列最下进程
-			MPI_Send(csbuf3, count1, MPI_DOUBLE, iam-npx, 26, MPI_COMM_WORLD);
-			MPI_Recv(crbuf4, count2, MPI_DOUBLE, iam-npx, 27, MPI_COMM_WORLD, &status);
-		}
-	}
-
-	if(iam < npx*(npy-1)){//除最上层进程，解包crbuf1(纵向上侧接收)
-		count1 = 0;
-		for(t = 0; t < 2; t++){
-			for(j = YSLOPE+iy; j < YSLOPE+iy+tb+YSLOPE; j++){
-				for(i = 0; i < domain_x; i++){
-					B[t][j][i] = crbuf3[count1];
-					count1++;
-				}
-			}
-		}
-	}
-
-	if(iam >= npx){//除了最下层进程，解包crbuf2(纵向下侧接收)
-		count2 = 0;
-		for(t = 0; t < 2; t++){
-			for(j = 0; j < YSLOPE; j++){
-				for(i = 0; i < domain_x; i++){
-					B[t][j][i] = crbuf4[count2];
-					count2++;
-				}
-			}
-		}
-	}
-//if(iam==2) printf("before check2, A[0][8][7]=%lf\tA[1][8][7]=%lf\tB[0][8][7]=%lf\tB[1][8][7]=%lf\n",A[0][8][7],A[1][8][7],B[0][8][7],B[1][8][7]);
-
-	for (t = 0; t < T; t++){
-		for (y = YSLOPE; y < domain_y-YSLOPE; y++){
-			for (x = XSLOPE; x < domain_x-XSLOPE; x++){
-				kernel(B);
-			}
-		}
-		count1 = 0;
-		count2 = 0;
-		for(j = YSLOPE; j < domain_y-YSLOPE; j++){
-			for(i = tb+XSLOPE; i < tb+2*XSLOPE; i++){
-				csbuf1[count1] = B[(t+1)%2][j][i];
-				count1++;
-			}
-		}
-		for(j = YSLOPE; j < domain_y-YSLOPE; j++){
-			for(i = ix; i < ix+XSLOPE; i++){
-				csbuf2[count2] = B[(t+1)%2][j][i];
-				count2++;
-			}
-		}
 		if((iam%npx) & 0x1){//奇数列进程先发送csbuf1，接收csbuf2
-			MPI_Send(csbuf1, count1, MPI_DOUBLE, iam-1, 30, MPI_COMM_WORLD);
-			MPI_Recv(crbuf2, count2, MPI_DOUBLE, iam-1, 31, MPI_COMM_WORLD, &status);
+			MPI_Send(csbuf1, count1, MPI_DOUBLE, iam-1, 20, MPI_COMM_WORLD);
+			MPI_Recv(crbuf2, count2, MPI_DOUBLE, iam-1, 21, MPI_COMM_WORLD, &status);
 			if((iam+1)%npx != 0){//除每行最右进程
-				MPI_Recv(crbuf1, count1, MPI_DOUBLE, iam+1, 32, MPI_COMM_WORLD, &status);
-				MPI_Send(csbuf2, count2, MPI_DOUBLE, iam+1, 33, MPI_COMM_WORLD);
+				MPI_Recv(crbuf1, count1, MPI_DOUBLE, iam+1, 22, MPI_COMM_WORLD, &status);
+				MPI_Send(csbuf2, count2, MPI_DOUBLE, iam+1, 23, MPI_COMM_WORLD);
 			}
 		}
 		else{//偶数列进程先接收csbuf1，发送csbuf2
 			if((iam+1)%npx != 0){//除每行最右进程
-				MPI_Recv(crbuf1, count1, MPI_DOUBLE, iam+1, 30, MPI_COMM_WORLD, &status);
-				MPI_Send(csbuf2, count2, MPI_DOUBLE, iam+1, 31, MPI_COMM_WORLD);
+				MPI_Recv(crbuf1, count1, MPI_DOUBLE, iam+1, 20, MPI_COMM_WORLD, &status);
+				MPI_Send(csbuf2, count2, MPI_DOUBLE, iam+1, 21, MPI_COMM_WORLD);
 			}
 			if(iam%npx != 0){//除每行最左进程
-				MPI_Send(csbuf1, count1, MPI_DOUBLE, iam-1, 32, MPI_COMM_WORLD);
-				MPI_Recv(crbuf2, count2, MPI_DOUBLE, iam-1, 33, MPI_COMM_WORLD, &status);
+				MPI_Send(csbuf1, count1, MPI_DOUBLE, iam-1, 22, MPI_COMM_WORLD);
+				MPI_Recv(crbuf2, count2, MPI_DOUBLE, iam-1, 23, MPI_COMM_WORLD, &status);
 			}
 		}
+
 		if((iam+1)%npx != 0){//除了每行最右进程, 解包crbuf1(横向右侧接收)
 			count1 = 0;
-			for(j = YSLOPE; j < domain_y-YSLOPE; j++){
-				for(i = domain_x-XSLOPE; i < domain_x; i++){
-					B[(t+1)%2][j][i] = crbuf1[count1];
-					count1++;
+			for(t = 0; t < 2; t++){
+				for(j = ((iam<npx)? 0 : YSLOPE); j < ((iam<npx*(npy-1)) ? (YSLOPE+iy) : domain_y); j++){//最下一行，多发送一个下边界，最上层，多发一个上边界
+					for(i = XSLOPE+ix; i < XSLOPE+ix+tb+XSLOPE; i++){
+						B[t][j][i] = crbuf1[count1];
+						count1++;
+					}
 				}
 			}
 		}
+
 		if(iam%npx != 0){//除了每行最左进程, 解包crbuf2(横向左侧接收)
 			count2 = 0;
-			for(j = YSLOPE; j < domain_y-YSLOPE; j++){
-				for(i = 0; i < XSLOPE; i++){
-					B[(t+1)%2][j][i] = crbuf2[count2];
-					count2++;
+			for(t = 0; t < 2; t++){
+				for(j = ((iam<npx)? 0 : YSLOPE); j < ((iam<npx*(npy-1)) ? (YSLOPE+iy) : domain_y); j++){//最下一行，多发送一个下边界，最上层，多发一个上边界
+					for(i = 0; i < XSLOPE; i++){
+						B[t][j][i] = crbuf2[count2];
+						count2++;
+					}
 				}
 			}
 		}
-//if(iam==2) printf("before check3, A[0][8][7]=%lf\tA[1][8][7]=%lf\tB[0][8][7]=%lf\tB[1][8][7]=%lf\n",A[0][8][7],A[1][8][7],B[0][8][7],B[1][8][7]);
 
-		count1 = 0;
-		count2 = 0;
-		for(j = tb+YSLOPE; j < tb+2*YSLOPE; j++){
-			for(i = 0; i < domain_x; i++){
-				csbuf3[count1] = B[(t+1)%2][j][i];
-				count1++;
+
+		if(iam >= npx){//除了最下层进程，打包csbuf1(纵向向下传输)
+			count1 = 0;
+			for(t = 0; t < 2; t++){
+				for(j = YSLOPE; j < YSLOPE+tb+YSLOPE; j++){
+					for(i = 0; i < domain_x; i++){
+						csbuf3[count1] = B[t][j][i];
+						count1++;
+					}
+				}
 			}
 		}
-		for(j = iy; j < iy+YSLOPE; j++){
-			for(i = 0; i < domain_x; i++){
-				csbuf4[count2] = B[(t+1)%2][j][i];
-				count2++;
+		else count1 = (tb+YSLOPE)*domain_x*2;
+
+		if(iam < npx*(npy-1)){//除最上层进程，打包csbuf2(纵向向上传输)
+			count2 = 0;
+			for(t = 0; t < 2; t++){ 
+				for(j = iy; j < YSLOPE+iy; j++){
+					for(i = 0; i < domain_x; i++){
+						csbuf4[count2] = B[t][j][i];
+						count2++;
+					}
+				}
 			}
 		}
-		if((iam/npx) & 0x1){//奇数行进程先发送csbuf3，接收csbuf4
-			MPI_Send(csbuf3, count1, MPI_DOUBLE, iam-npx, 34, MPI_COMM_WORLD);
-			MPI_Recv(crbuf4, count2, MPI_DOUBLE, iam-npx, 35, MPI_COMM_WORLD, &status);
+		else count2 = YSLOPE*domain_x*2;
+
+		if((iam/npx) & 0x1){//奇数行进程先发送csbuf1，接收csbuf2
+			MPI_Send(csbuf3, count1, MPI_DOUBLE, iam-npx, 24, MPI_COMM_WORLD);
+			MPI_Recv(crbuf4, count2, MPI_DOUBLE, iam-npx, 25, MPI_COMM_WORLD, &status);
 			if(iam < npx*(npy-1)){//除每列最上进程
-				MPI_Recv(crbuf3, count1, MPI_DOUBLE, iam+npx, 36, MPI_COMM_WORLD, &status);
-				MPI_Send(csbuf4, count2, MPI_DOUBLE, iam+npx, 37, MPI_COMM_WORLD);
+				MPI_Recv(crbuf3, count1, MPI_DOUBLE, iam+npx, 26, MPI_COMM_WORLD, &status);
+				MPI_Send(csbuf4, count2, MPI_DOUBLE, iam+npx, 27, MPI_COMM_WORLD);
 			}
 		}
-		else{//偶数行进程先接收csbuf3，发送csbuf4
+		else{//偶数行进程先接收csbuf1，发送csbuf2
 			if(iam < npx*(npy-1)){//除每列最上进程
-				MPI_Recv(crbuf3, count1, MPI_DOUBLE, iam+npx, 34, MPI_COMM_WORLD, &status);
-				MPI_Send(csbuf4, count2, MPI_DOUBLE, iam+npx, 35, MPI_COMM_WORLD);
+				MPI_Recv(crbuf3, count1, MPI_DOUBLE, iam+npx, 24, MPI_COMM_WORLD, &status);
+				MPI_Send(csbuf4, count2, MPI_DOUBLE, iam+npx, 25, MPI_COMM_WORLD);
 			}
 			if(iam >= npx){//除每列最下进程
-				MPI_Send(csbuf3, count1, MPI_DOUBLE, iam-npx, 36, MPI_COMM_WORLD);
-				MPI_Recv(crbuf4, count2, MPI_DOUBLE, iam-npx, 37, MPI_COMM_WORLD, &status);
+				MPI_Send(csbuf3, count1, MPI_DOUBLE, iam-npx, 26, MPI_COMM_WORLD);
+				MPI_Recv(crbuf4, count2, MPI_DOUBLE, iam-npx, 27, MPI_COMM_WORLD, &status);
 			}
 		}
-		if(iam < npx*(npy-1)){//除最上层进程，解包crbuf3(纵向上侧接收)
+
+		if(iam < npx*(npy-1)){//除最上层进程，解包crbuf1(纵向上侧接收)
 			count1 = 0;
-			for(j = domain_y-YSLOPE; j < domain_y; j++){
-				for(i = 0; i < domain_x; i++){
-					B[(t+1)%2][j][i] = crbuf3[count1];
+			for(t = 0; t < 2; t++){
+				for(j = YSLOPE+iy; j < YSLOPE+iy+tb+YSLOPE; j++){
+					for(i = 0; i < domain_x; i++){
+						B[t][j][i] = crbuf3[count1];
+						count1++;
+					}
+				}
+			}
+		}
+
+		if(iam >= npx){//除了最下层进程，解包crbuf2(纵向下侧接收)
+			count2 = 0;
+			for(t = 0; t < 2; t++){
+				for(j = 0; j < YSLOPE; j++){
+					for(i = 0; i < domain_x; i++){
+						B[t][j][i] = crbuf4[count2];
+						count2++;
+					}
+				}
+			}
+		}
+	//if(iam==2) printf("before check2, A[0][8][7]=%lf\tA[1][8][7]=%lf\tB[0][8][7]=%lf\tB[1][8][7]=%lf\n",A[0][8][7],A[1][8][7],B[0][8][7],B[1][8][7]);
+
+		for (t = 0; t < T; t++){
+			for (y = YSLOPE; y < domain_y-YSLOPE; y++){
+				for (x = XSLOPE; x < domain_x-XSLOPE; x++){
+					kernel(B);
+				}
+			}
+			count1 = 0;
+			count2 = 0;
+			for(j = YSLOPE; j < domain_y-YSLOPE; j++){
+				for(i = tb+XSLOPE; i < tb+2*XSLOPE; i++){
+					csbuf1[count1] = B[(t+1)%2][j][i];
 					count1++;
 				}
 			}
-		}
-		if(iam >= npx){//除了最下层进程，解包crbuf4(纵向下侧接收)
-			count2 = 0;
-			for(j = 0; j < YSLOPE; j++){
-				for(i = 0; i < domain_x; i++){
-					B[(t+1)%2][j][i] = crbuf4[count2];
+			for(j = YSLOPE; j < domain_y-YSLOPE; j++){
+				for(i = ix; i < ix+XSLOPE; i++){
+					csbuf2[count2] = B[(t+1)%2][j][i];
 					count2++;
 				}
 			}
-		}
-	}
-//if(iam==2) printf("before check4, A[0][8][7]=%lf\tA[1][8][7]=%lf\tB[0][8][7]=%lf\tB[1][8][7]=%lf\n",A[0][8][7],A[1][8][7],B[0][8][7],B[1][8][7]);
+			if((iam%npx) & 0x1){//奇数列进程先发送csbuf1，接收csbuf2
+				MPI_Send(csbuf1, count1, MPI_DOUBLE, iam-1, 30, MPI_COMM_WORLD);
+				MPI_Recv(crbuf2, count2, MPI_DOUBLE, iam-1, 31, MPI_COMM_WORLD, &status);
+				if((iam+1)%npx != 0){//除每行最右进程
+					MPI_Recv(crbuf1, count1, MPI_DOUBLE, iam+1, 32, MPI_COMM_WORLD, &status);
+					MPI_Send(csbuf2, count2, MPI_DOUBLE, iam+1, 33, MPI_COMM_WORLD);
+				}
+			}
+			else{//偶数列进程先接收csbuf1，发送csbuf2
+				if((iam+1)%npx != 0){//除每行最右进程
+					MPI_Recv(crbuf1, count1, MPI_DOUBLE, iam+1, 30, MPI_COMM_WORLD, &status);
+					MPI_Send(csbuf2, count2, MPI_DOUBLE, iam+1, 31, MPI_COMM_WORLD);
+				}
+				if(iam%npx != 0){//除每行最左进程
+					MPI_Send(csbuf1, count1, MPI_DOUBLE, iam-1, 32, MPI_COMM_WORLD);
+					MPI_Recv(crbuf2, count2, MPI_DOUBLE, iam-1, 33, MPI_COMM_WORLD, &status);
+				}
+			}
+			if((iam+1)%npx != 0){//除了每行最右进程, 解包crbuf1(横向右侧接收)
+				count1 = 0;
+				for(j = YSLOPE; j < domain_y-YSLOPE; j++){
+					for(i = domain_x-XSLOPE; i < domain_x; i++){
+						B[(t+1)%2][j][i] = crbuf1[count1];
+						count1++;
+					}
+				}
+			}
+			if(iam%npx != 0){//除了每行最左进程, 解包crbuf2(横向左侧接收)
+				count2 = 0;
+				for(j = YSLOPE; j < domain_y-YSLOPE; j++){
+					for(i = 0; i < XSLOPE; i++){
+						B[(t+1)%2][j][i] = crbuf2[count2];
+						count2++;
+					}
+				}
+			}
+	//if(iam==2) printf("before check3, A[0][8][7]=%lf\tA[1][8][7]=%lf\tB[0][8][7]=%lf\tB[1][8][7]=%lf\n",A[0][8][7],A[1][8][7],B[0][8][7],B[1][8][7]);
 
-	for (j = YSLOPE; j < domain_y-YSLOPE; j++){
-		for (i = XSLOPE; i < domain_x-XSLOPE; i++){
-			if(myabs(A[T%2][j][i],B[T%2][j][i]) > TOLERANCE)
-				printf("%d:\tNaive[%d][%d] = %f, Check = %f: FAILED!\n", iam, j, i, B[T%2][j][i], A[T%2][j][i]);
+			count1 = 0;
+			count2 = 0;
+			for(j = tb+YSLOPE; j < tb+2*YSLOPE; j++){
+				for(i = 0; i < domain_x; i++){
+					csbuf3[count1] = B[(t+1)%2][j][i];
+					count1++;
+				}
+			}
+			for(j = iy; j < iy+YSLOPE; j++){
+				for(i = 0; i < domain_x; i++){
+					csbuf4[count2] = B[(t+1)%2][j][i];
+					count2++;
+				}
+			}
+			if((iam/npx) & 0x1){//奇数行进程先发送csbuf3，接收csbuf4
+				MPI_Send(csbuf3, count1, MPI_DOUBLE, iam-npx, 34, MPI_COMM_WORLD);
+				MPI_Recv(crbuf4, count2, MPI_DOUBLE, iam-npx, 35, MPI_COMM_WORLD, &status);
+				if(iam < npx*(npy-1)){//除每列最上进程
+					MPI_Recv(crbuf3, count1, MPI_DOUBLE, iam+npx, 36, MPI_COMM_WORLD, &status);
+					MPI_Send(csbuf4, count2, MPI_DOUBLE, iam+npx, 37, MPI_COMM_WORLD);
+				}
+			}
+			else{//偶数行进程先接收csbuf3，发送csbuf4
+				if(iam < npx*(npy-1)){//除每列最上进程
+					MPI_Recv(crbuf3, count1, MPI_DOUBLE, iam+npx, 34, MPI_COMM_WORLD, &status);
+					MPI_Send(csbuf4, count2, MPI_DOUBLE, iam+npx, 35, MPI_COMM_WORLD);
+				}
+				if(iam >= npx){//除每列最下进程
+					MPI_Send(csbuf3, count1, MPI_DOUBLE, iam-npx, 36, MPI_COMM_WORLD);
+					MPI_Recv(crbuf4, count2, MPI_DOUBLE, iam-npx, 37, MPI_COMM_WORLD, &status);
+				}
+			}
+			if(iam < npx*(npy-1)){//除最上层进程，解包crbuf3(纵向上侧接收)
+				count1 = 0;
+				for(j = domain_y-YSLOPE; j < domain_y; j++){
+					for(i = 0; i < domain_x; i++){
+						B[(t+1)%2][j][i] = crbuf3[count1];
+						count1++;
+					}
+				}
+			}
+			if(iam >= npx){//除了最下层进程，解包crbuf4(纵向下侧接收)
+				count2 = 0;
+				for(j = 0; j < YSLOPE; j++){
+					for(i = 0; i < domain_x; i++){
+						B[(t+1)%2][j][i] = crbuf4[count2];
+						count2++;
+					}
+				}
+			}
+		}
+	//if(iam==2) printf("before check4, A[0][8][7]=%lf\tA[1][8][7]=%lf\tB[0][8][7]=%lf\tB[1][8][7]=%lf\n",A[0][8][7],A[1][8][7],B[0][8][7],B[1][8][7]);
+
+		for (j = YSLOPE; j < min(domain_y, iy+YSLOPE); j++){
+			for (i = XSLOPE; i < ix+XSLOPE; i++){
+				if(myabs(A[T%2][j][i],B[T%2][j][i]) > TOLERANCE)
+					printf("%d:\tNaive[%d][%d] = %f, Check = %f: FAILED!\n", iam, j, i, B[T%2][j][i], A[T%2][j][i]);
+			}
+		}
+		for (j = YSLOPE+iy/2; j < domain_y-YSLOPE; j++){
+			for (i = XSLOPE+ix/2; i < domain_x-XSLOPE; i++){
+				if(myabs(A[T%2][j][i],B[T%2][j][i]) > TOLERANCE)
+					printf("%d:\tNaive[%d][%d] = %f, Check = %f: FAILED!\n", iam, j, i, B[T%2][j][i], A[T%2][j][i]);
+			}
+		}
+		if(iam < npx){
+			for (j = YSLOPE; j < YSLOPE+iy/2; j++){
+				for (i = XSLOPE+ix; i < domain_x-XSLOPE; i++){
+					if(myabs(A[T%2][j][i],B[T%2][j][i]) > TOLERANCE)
+						printf("%d:\tNaive[%d][%d] = %f, Check = %f: FAILED!\n", iam, j, i, B[T%2][j][i], A[T%2][j][i]);
+				}
+			}
+		}
+		if(iam%npx == 0){
+			for (j = YSLOPE+iy; j < domain_y-YSLOPE; j++){
+				for (i = XSLOPE; i < XSLOPE+ix/2; i++){
+					if(myabs(A[T%2][j][i],B[T%2][j][i]) > TOLERANCE)
+						printf("%d:\tNaive[%d][%d] = %f, Check = %f: FAILED!\n", iam, j, i, B[T%2][j][i], A[T%2][j][i]);
+				}
+			}
 		}
 	}
 #endif
 	
-}
+
     MPI_Barrier(MPI_COMM_WORLD);
     // free(sbuf1);
     // free(sbuf2);
