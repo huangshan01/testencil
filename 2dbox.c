@@ -11,7 +11,7 @@
 #define myabs(x,y)  (((x) > (y))? ((x)-(y)) : ((y)-(x)))
 
 #if !defined(point) 
-#define point 5
+#define point 9
 #endif
 
 #if point == 5
@@ -53,7 +53,7 @@ int b2s23(int cell, int neighbors){
 
 
 #ifdef CHECK
-#define TOLERANCE  0
+#define TOLERANCE  0.000000000001
 #endif
 
 
@@ -120,6 +120,8 @@ int main(int argc, char * argv[]){
 	}
 
 	int count1, count2;
+	long traffic = 0;
+	long traffic_all = 0;
 
 #ifdef CHECK
 	DATA_TYPE (*B)[domain_y][domain_x] = (DATA_TYPE (*)[domain_y][domain_x])malloc(sizeof(DATA_TYPE)*domain_x*domain_y*2);
@@ -355,6 +357,7 @@ int main(int argc, char * argv[]){
 
 			if((iam%npx) & 0x1){//奇数列进程先发送sbuf1
 				MPI_Send(sbuf1, count1, MPI_DOUBLE, iam-1, 0, MPI_COMM_WORLD);
+				traffic += count1;
 				if((iam+1)%npx != 0){//除每行最右进程
 					MPI_Recv(rbuf1, count1, MPI_DOUBLE, iam+1, 1, MPI_COMM_WORLD, &status);
 				}
@@ -365,10 +368,12 @@ int main(int argc, char * argv[]){
 				}
 				if(iam%npx != 0){//除每行最左进程
 					MPI_Send(sbuf1, count1, MPI_DOUBLE, iam-1, 1, MPI_COMM_WORLD);
+					traffic += count1;
 				}
 			}
 			if((iam/npx) & 0x1){//奇数行进程先发送sbuf2
 				MPI_Send(sbuf2, count2, MPI_DOUBLE, iam-npx, 2, MPI_COMM_WORLD);
+				traffic += count2;
 				if(iam < npx*(npy-1)){//除每列最上进程
 					MPI_Recv(rbuf2, count2, MPI_DOUBLE, iam+npx, 3, MPI_COMM_WORLD, &status);
 				}
@@ -379,6 +384,7 @@ int main(int argc, char * argv[]){
 				}
 				if(iam >= npx){//除每列最下进程
 					MPI_Send(sbuf2, count2, MPI_DOUBLE, iam-npx, 3, MPI_COMM_WORLD);
+					traffic += count2;
 				}
 			}
 
@@ -475,6 +481,7 @@ int main(int argc, char * argv[]){
 			if((iam%npx) & 0x1){//奇数列进程先发送sbuf1
 				if((iam+1)%npx != 0){//除每行最右进程
 					MPI_Send(sbuf1, count1, MPI_DOUBLE, iam+1, 0, MPI_COMM_WORLD);
+					traffic += count1;
 				}
 				MPI_Recv(rbuf1, count1, MPI_DOUBLE, iam-1, 1, MPI_COMM_WORLD, &status);
 				//printf("%d:\t level=%d \t B0 rbuf1 recv!\n",iam,level);
@@ -485,12 +492,14 @@ int main(int argc, char * argv[]){
 				}
 				if((iam+1)%npx != 0){//除每行最右进程
 					MPI_Send(sbuf1, count1, MPI_DOUBLE, iam+1, 1, MPI_COMM_WORLD);
+					traffic += count1;
 					//printf("%d:\t level=%d \t B0 rbuf1 send!\n",iam,level);
 				}
 			}
 			if((iam/npx) & 0x1){//奇数行进程先发送sbuf2
 				if(iam < npx*(npy-1)){//除每列最上进程
 					MPI_Send(sbuf2, count2, MPI_DOUBLE, iam+npx, 2, MPI_COMM_WORLD);
+					traffic += count2;
 				}
 				MPI_Recv(rbuf2, count2, MPI_DOUBLE, iam-npx, 3, MPI_COMM_WORLD, &status);
 				//printf("%d:\t level=%d \t B0 rbuf2 recv!\n",iam,level);
@@ -501,6 +510,7 @@ int main(int argc, char * argv[]){
 				}
 				if(iam < npx*(npy-1)){//除每列最上进程
 					MPI_Send(sbuf2, count2, MPI_DOUBLE, iam+npx, 3, MPI_COMM_WORLD);
+					traffic += count2;
 					//printf("%d:\t level=%d \t B0 rbuf2 send!\n",iam,level);
 				}
 			}
@@ -625,6 +635,7 @@ int main(int argc, char * argv[]){
 
 		if((iam%npx) & 0x1){//奇数列进程先发送sbuf1
 			MPI_Send(sbuf1, count1, MPI_DOUBLE, iam-1, 6, MPI_COMM_WORLD);
+			traffic += count1;
 			if((iam+1)%npx != 0){//除每行最右进程
 				MPI_Recv(rbuf1, count1, MPI_DOUBLE, iam+1, 7, MPI_COMM_WORLD, &status);
 			}
@@ -636,10 +647,12 @@ int main(int argc, char * argv[]){
 			}
 			if(iam%npx != 0){//除每行最左进程
 				MPI_Send(sbuf1, count1, MPI_DOUBLE, iam-1, 7, MPI_COMM_WORLD);
+				traffic += count1;
 			}
 		}
 		if((iam/npx) & 0x1){//奇数行进程先发送sbuf2
 			MPI_Send(sbuf2, count2, MPI_DOUBLE, iam-npx, 8, MPI_COMM_WORLD);
+			traffic += count2;
 			//if(iam==2) printf("%d:\t level=%d \t B1 rbuf2 %d send!\n",iam,level,count2);
 			if(iam < npx*(npy-1)){//除每列最上进程
 				MPI_Recv(rbuf2, count2, MPI_DOUBLE, iam+npx, 9, MPI_COMM_WORLD, &status);
@@ -652,6 +665,7 @@ int main(int argc, char * argv[]){
 			}
 			if(iam >= npx){//除每列最下进程
 				MPI_Send(sbuf2, count2, MPI_DOUBLE, iam-npx, 9, MPI_COMM_WORLD);
+				traffic += count2;
 			}
 		}
 
@@ -732,6 +746,7 @@ int main(int argc, char * argv[]){
 		if((iam%npx) & 0x1){//奇数列进程先发送sbuf1
 			if((iam+1)%npx != 0){//除每行最右进程
 				MPI_Send(sbuf1, count1, MPI_DOUBLE, iam+1, 6, MPI_COMM_WORLD);
+				traffic += count1;
 			}
 			MPI_Recv(rbuf1, count1, MPI_DOUBLE, iam-1, 7, MPI_COMM_WORLD, &status);
 		}
@@ -741,11 +756,13 @@ int main(int argc, char * argv[]){
 			}
 			if((iam+1)%npx != 0){//除每行最右进程
 				MPI_Send(sbuf1, count1, MPI_DOUBLE, iam+1, 7, MPI_COMM_WORLD);
+				traffic += count1;
 			}
 		}
 		if((iam/npx) & 0x1){//奇数行进程先发送sbuf2
 			if(iam < npx*(npy-1)){//除每列最上进程
 				MPI_Send(sbuf2, count2, MPI_DOUBLE, iam+npx, 8, MPI_COMM_WORLD);
+				traffic += count2;
 			}
 			MPI_Recv(rbuf2, count2, MPI_DOUBLE, iam-npx, 9, MPI_COMM_WORLD, &status);
 		}
@@ -755,6 +772,7 @@ int main(int argc, char * argv[]){
 			}
 			if(iam < npx*(npy-1)){//除每列最上进程
 				MPI_Send(sbuf2, count2, MPI_DOUBLE, iam+npx, 9, MPI_COMM_WORLD);
+				traffic += count2;
 			}
 		}
 
@@ -791,9 +809,11 @@ int main(int argc, char * argv[]){
 
     MPI_Barrier(MPI_COMM_WORLD);
     elaspe = MPI_Wtime()-begin;
+	MPI_Reduce(&traffic,&traffic_all,1,MPI_LONG,MPI_SUM,0,MPI_COMM_WORLD);
 
+	
     if(iam == 0)
-		printf("NX = %d\tNY = %d\tBx = %d\tbx = %d\tBy = %d\tby = %d\ttb = %d\tMStencil/s = %f\n",NX,NY,Bx,bx,By,by,tb,((double)NX * NY * T) / elaspe / 1000000L);
+		printf("NX = %d\tNY = %d\tBx = %d\tbx = %d\tBy = %d\tby = %d\ttb = %d\tMStencil/s = %f\ttraffic = %ld\n",NX,NY,Bx,bx,By,by,tb,((double)NX * NY * T) / elaspe / 1000000L,traffic_all);
 
 #ifdef CHECK
 		//if(iam==2) printf("before check, A[0][8][7]=%lf\tA[1][8][7]=%lf\tB[0][8][7]=%lf\tB[1][8][7]=%lf\n",A[0][8][7],A[1][8][7],B[0][8][7],B[1][8][7]);
@@ -1086,7 +1106,7 @@ int main(int argc, char * argv[]){
     // free(sbuf2);
     // free(rbuf1);
     // free(rbuf2);
-
+	
   	MPI_Finalize();
 
 }
